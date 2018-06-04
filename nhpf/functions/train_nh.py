@@ -78,6 +78,10 @@ def run_complete(args):
         sampling=sampling, use_gpu=args['UseGPU'],
         missing_types=range(obs_num, total_event_num)
     )
+    r"""
+    |FOR FUTURE USE| comments about missing types
+    """
+
     logger = processors.LogWriter(
         args['PathLog'], args)
 

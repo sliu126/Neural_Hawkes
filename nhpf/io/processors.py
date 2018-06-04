@@ -61,6 +61,10 @@ def sampleForIntegral(input, sampling=1, device=torch):
     event, time, post, duration, lens, \
     event_obs, dtime_obs, dtime_backward, index_of_hidden_backward = input
 
+    r"""
+    comments about unobserved types
+    """
+
     num_particles, T_plus_2 = event.size()
     _, T_obs_plus_2 = event_obs.size()
     assert lens.max() + 2 == T_plus_2, "max len should match"
@@ -284,6 +288,11 @@ def processSeq(
 #@profile
 def processBatchParticles(
     batch_of_seqs, idx_BOS, idx_EOS, idx_PAD, device=torch):
+
+    r"""
+    in this project, num_particles is always 1
+    so much functionality of this method is not used 
+    """
 
     batch_size = len(batch_of_seqs)
     num_particles = batch_of_seqs[0][2].size(0)

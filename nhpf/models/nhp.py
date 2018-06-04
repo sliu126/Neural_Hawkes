@@ -85,6 +85,9 @@ class NeuralHawkes(nn.Module):
         self.obs_num = obs_num
         self.unobs_num = unobs_num
         self.total_num = obs_num + unobs_num
+        r"""
+        comments about unobserved types 
+        """
         self.hidden_dim = hidden_dim
 
         self.idx_BOS = self.total_num
@@ -118,7 +121,7 @@ class NeuralHawkes(nn.Module):
         self.eps = numpy.finfo(float).eps
         self.max = numpy.finfo(float).max
 
-    
+
     def getStates(self, event, dtime):
         r"""
         go through the sequences and get all the states and gates
@@ -192,7 +195,7 @@ class NeuralHawkes(nn.Module):
         return batch_size, num_particles, T_plus_2, \
         all_cell, all_cell_bar, all_gate_decay, all_gate_output, \
         all_hidden, all_hidden_after_update
-    
+
     def getTarget(self, event, dtime):
         r"""
         make target variable and masks
