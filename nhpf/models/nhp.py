@@ -327,7 +327,6 @@ class NeuralHawkes(nn.Module):
         log_lambda_target_complete, log_lambda_sum_complete = self.getLogLambda(
             batch_size, num_particles, T_plus_2,
             target, mask_complete, all_hidden)
-        #print(log_lambda_target_complete)
         # batch_size * num_particles * T_plus_2-1
         # </s> \lambda_{k_i}(t_i) for scheduled actions
 
@@ -335,7 +334,6 @@ class NeuralHawkes(nn.Module):
         # <s> int_{0}^{T} lambda_sum dt for scheduled actions
         integral_complete = self.getIntegral(
             sampled_hidden, mask_sampling, duration)
-        #print(integral_complete)
         # batch_size * num_particles
         # </s> int_{0}^{T} lambda_sum dt for scheduled actions
 
