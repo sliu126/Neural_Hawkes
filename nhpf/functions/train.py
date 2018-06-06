@@ -34,7 +34,7 @@ def main():
     parser.add_argument(
         '-m', '--Model', default='nh',
         choices=['nh'],
-        help='what model to use?'
+        help='what model to use? For now only nh is available'
     )
     parser.add_argument(
         '-pd', '--PathData', required=True,

@@ -21,13 +21,10 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as functional
 from torch.autograd import Variable
-#import torchvision.transforms as transforms
 
 from nhpf.models import nhp
 from nhpf.io import processors
-#from nhpf.eval import distance
 
-#
 import argparse
 __author__ = 'Hongyuan Mei'
 
@@ -50,8 +47,7 @@ def run_complete(args):
     train : train -- complete seqs
     dev/test : dev/test -- complete seqs
 
-    obs_num : \# of observed types
-    unobs_num : \# of unobserved types
+    total_num : \total # of types
 
     but this may be changed, if we enable stochastic missingness
     """
@@ -59,28 +55,24 @@ def run_complete(args):
     data = pkl_train['train']
     data_dev = pkl_dev['dev']
 
-    obs_num, unobs_num = int(pkl_train['dim_process']), 0
+    total_num = int(pkl_train['dim_process'])
     hidden_dim = args['DimLSTM']
 
     agent = nhp.NeuralHawkes(
-        obs_num, unobs_num, hidden_dim,
+        total_num, hidden_dim,
         use_gpu=args['UseGPU'] )
 
     if args['UseGPU']:
         agent.cuda()
 
     sampling = 1
-    total_event_num = obs_num + unobs_num
+    total_event_num = total_num
     proc = processors.DataProcessorNeuralHawkes(
         idx_BOS=total_event_num,
         idx_EOS=total_event_num+1,
         idx_PAD=total_event_num+2,
-        sampling=sampling, use_gpu=args['UseGPU'],
-        missing_types=range(obs_num, total_event_num)
+        sampling=sampling, use_gpu=args['UseGPU']
     )
-    r"""
-    |FOR FUTURE USE| comments about missing types
-    """
 
     logger = processors.LogWriter(
         args['PathLog'], args)
@@ -126,8 +118,6 @@ def run_complete(args):
             optimizer.step()
             optimizer.zero_grad()
             time_train_only += (time.time() - time_train_only_0)
-            #agent.checkWeights()
-            #agent.constrainWeights()
 
             input = []
 
@@ -143,7 +133,6 @@ def run_complete(args):
 
                 input_dev = []
                 agent.eval()
-                #print("scale now is : {}".format(agent.scale.data))
 
                 index = 0
                 for one_seq_dev in data_dev:

@@ -77,17 +77,13 @@ class CTLSTMCell(nn.Module):
 class NeuralHawkes(nn.Module):
 
     def __init__(
-        self, obs_num, unobs_num=0,
+        self, total_num,
         hidden_dim=32, time_eps=0.001, time_max=1000.0, beta=1.0, #strength=0.0,
-        num_unobs_tokens=0, use_gpu=False):
+        use_gpu=False):
         super(NeuralHawkes, self).__init__()
 
-        self.obs_num = obs_num
-        self.unobs_num = unobs_num
-        self.total_num = obs_num + unobs_num
-        r"""
-        comments about unobserved types 
-        """
+        self.total_num = total_num
+
         self.hidden_dim = hidden_dim
 
         self.idx_BOS = self.total_num
@@ -98,12 +94,9 @@ class NeuralHawkes(nn.Module):
         self.time_max = time_max
         self.beta = beta
 
-        self.num_unobs_tokens = num_unobs_tokens
-        # there won't be more unobs event tokens than num_unobs_tokens
         self.use_gpu = use_gpu
         self.device = torch.cuda if use_gpu else torch
 
-        #print("event dim {} and hidden_dim {}".format(event_dim, hidden_dim))
         self.Emb = nn.Embedding(
             self.total_num + 3, hidden_dim)
 
@@ -150,7 +143,7 @@ class NeuralHawkes(nn.Module):
             i or i + 1, that is a question
             i : seems working because the log-prob increasing from -2 to -1
             i + 1 : seems not working because log-prob quickly stuck in -2
-            but technically, i believe i + 1 is current, because
+            but technically, i believe i + 1 is correct, because
             after updating LSTM with i-th event, we should use the dtime of
             i + 1 -th event to decay the hidden states (used for next step)
             how to decide ? --- benchmark it !!!
@@ -202,39 +195,26 @@ class NeuralHawkes(nn.Module):
         """
         batch_size, num_particles, T_plus_2 = event.size()
         mask_complete = torch.ones_like(dtime[:, :, 1:])
-        mask_obs = torch.ones_like(dtime[:, :, 1:])
-        mask_unobs = torch.ones_like(dtime[:, :, 1:])
         target_data = event[:, :, 1:].detach().data.clone()
 
         mask_complete[target_data >= self.total_num] = 0.0
-        mask_obs[target_data >= self.obs_num] = 0.0
-        mask_unobs[target_data >= self.total_num] = 0.0
-        mask_unobs[target_data < self.obs_num] = 0.0
         target_data[target_data >= self.total_num] = 0
         target = Variable( target_data )
-        return target, mask_complete, mask_obs, mask_unobs
+
+        return target, mask_complete
 
 
     def getLogLambda(
         self, batch_size, num_particles, T_plus_2,
-        target, mask_complete, mask_obs, mask_unobs, all_hidden,
-        log_lambda_back_target_unobs=None):
+        target, mask_complete, all_hidden):
         r"""
-        we output log_lambda for all cases:
-        1. complete, including obs, unobs
-        2. only obs
-        3. only unobs, if self.unobs_num > 0
-        note that for unobs, we use lambda * lambda_back as intensity
-        if lambda_back is not None
+        we output log_lambda for one case:
+        1. complete, including obs, unobs (note that for now we don't have unobs)
         """
-
-        #print("type is {}".format(type(all_hidden) ) )
 
         all_lambda= F.softplus(self.hidden_lambda(all_hidden), beta=self.beta)
         log_lambda= torch.log(all_lambda+ self.eps)
 
-        #print("batchsize {}, num_particles {}, T_plus_2 {}".format(
-        #    batch_size, num_particles, T_plus_2))
 
         log_lambda_target = log_lambda.view(
             batch_size * num_particles * (T_plus_2 - 1), self.total_num
@@ -245,36 +225,12 @@ class NeuralHawkes(nn.Module):
 
         log_lambda_target_complete = log_lambda_target * mask_complete
 
-        log_lambda_target_obs = log_lambda_target * mask_obs
         lambda_sum_complete = torch.sum(all_lambda, dim=3)
-        lambda_sum_obs = torch.sum(all_lambda[:,:,:,:self.obs_num], dim=3)
 
         log_lambda_sum_complete = torch.log(lambda_sum_complete + self.eps)
-        log_lambda_sum_obs = torch.log(lambda_sum_obs + self.eps)
         log_lambda_sum_complete *= mask_complete
-        log_lambda_sum_obs *= mask_obs
 
-        if self.unobs_num > 0:
-            log_lambda_target_unobs = log_lambda_target * mask_unobs
-            if log_lambda_back_target_unobs is not None:
-                log_lambda_target_unobs = log_lambda_target_unobs + log_lambda_back_target_unobs
-            r"""
-            note that we do not modify lambda_sum_unobs
-            because they are not used in the model anyway
-            but if they are used, they may be modified with r2l part
-            """
-            lambda_sum_unobs = torch.sum(all_lambda[:,:,:,self.obs_num:], dim=3)
-            log_lambda_sum_unobs = torch.log(lambda_sum_unobs + self.eps)
-            log_lambda_sum_unobs *= mask_unobs
-        else:
-            log_lambda_target_unobs = None
-            lambda_sum_unobs = None
-            log_lambda_sum_unobs = None
-
-        #import ipdb; ipdb.set_trace()
-
-        return log_lambda_target_complete, log_lambda_target_obs, log_lambda_target_unobs, \
-        log_lambda_sum_complete, log_lambda_sum_obs, log_lambda_sum_unobs
+        return log_lambda_target_complete, log_lambda_sum_complete
 
 
     def getSampledStates(
@@ -318,13 +274,10 @@ class NeuralHawkes(nn.Module):
 
 
     def getIntegral(
-        self, hy_sample, mask_sampling, duration,
-        lambda_back_sample_unobs=None ):
+        self, hy_sample, mask_sampling, duration):
         r"""
-        we output integral for all cases:
-        1. complete, including obs, unobs
-        2. only obs
-        3. only unobs, if self.unobs_num > 0
+        we output integral for one case:
+        1. complete
         """
         r"""
         mask_sampling : batch_size * num_particles * max_len_sampling
@@ -332,47 +285,20 @@ class NeuralHawkes(nn.Module):
         """
         lambda_sample = F.softplus(
             self.hidden_lambda(hy_sample), beta=self.beta )
-        # batch_size, num_particles, max_len_sampling, self.total_num
 
-        lambda_sample_obs = lambda_sample[:,:,:, :self.obs_num]
         lambda_sample_complete_sum = lambda_sample.sum(3)
-        lambda_sample_obs_sum = lambda_sample_obs.sum(3)
-        # batch_size, num_particles, max_len_sampling
         lambda_sample_complete_mean = torch.sum(
             lambda_sample_complete_sum * mask_sampling, dim=2 ) / torch.sum(
             mask_sampling, dim=2 )
-        lambda_sample_obs_mean = torch.sum(
-            lambda_sample_obs_sum * mask_sampling, dim=2 ) / torch.sum(
-            mask_sampling, dim=2 )
         integral_complete = lambda_sample_complete_mean * duration
-        integral_obs = lambda_sample_obs_mean * duration
 
-        if self.unobs_num > 0 :
-            lambda_sample_unobs = lambda_sample[:,:,:, self.obs_num:]
-
-            if lambda_back_sample_unobs is not None:
-                lambda_sample_unobs = lambda_sample_unobs * lambda_back_sample_unobs
-
-            lambda_sample_unobs_sum = lambda_sample_unobs.sum(3)
-            lambda_sample_unobs_mean = torch.sum(
-                lambda_sample_unobs_sum * mask_sampling, dim=2) / torch.sum(
-                mask_sampling, dim=2)
-            integral_unobs = lambda_sample_unobs_mean * duration
-        else:
-            integral_unobs = None
-
-        #import ipdb; ipdb.set_trace()
-
-        return integral_complete, integral_obs, integral_unobs
+        return integral_complete
 
 
     def forward(self, input, mode=1, weight=None):
 
         event, dtime, post, duration, \
-        dtime_sampling, index_of_hidden_sampling, mask_sampling, \
-        event_obs, dtime_obs, \
-        dtime_backward, index_of_hidden_backward, \
-        dtime_backward_sampling, index_of_hidden_backward_sampling = input
+        dtime_sampling, index_of_hidden_sampling, mask_sampling = input
 
         r"""
         event, dtime : batch_size, M, T+2
@@ -389,7 +315,7 @@ class NeuralHawkes(nn.Module):
         all_cell, all_cell_bar, all_gate_decay, all_gate_output, \
         all_hidden, all_hidden_after_update = self.getStates(event, dtime)
 
-        target, mask_complete, mask_obs, mask_unobs = self.getTarget(
+        target, mask_complete = self.getTarget(
             event, dtime)
 
         sampled_hidden = self.getSampledStates(
@@ -397,41 +323,25 @@ class NeuralHawkes(nn.Module):
             all_cell, all_cell_bar, all_gate_output, all_gate_decay
         )
 
-
-        log_lambda_back_target_unobs = None
-        log_lambda_back_sum_unobs = None
-        lambda_back_sample_unobs = None
-
         # <s> \lambda_{k_i}(t_i) for scheduled actions
-        log_lambda_target_complete, \
-        log_lambda_target_obs, log_lambda_target_unobs, \
-        log_lambda_sum_complete, \
-        log_lambda_sum_obs, log_lambda_sum_unobs = self.getLogLambda(
+        log_lambda_target_complete, log_lambda_sum_complete = self.getLogLambda(
             batch_size, num_particles, T_plus_2,
-            target, mask_complete, mask_obs, mask_unobs, all_hidden,
-            log_lambda_back_target_unobs )
+            target, mask_complete, all_hidden)
+        #print(log_lambda_target_complete)
         # batch_size * num_particles * T_plus_2-1
         # </s> \lambda_{k_i}(t_i) for scheduled actions
 
 
         # <s> int_{0}^{T} lambda_sum dt for scheduled actions
-        integral_complete, integral_obs, integral_unobs = self.getIntegral(
-            sampled_hidden, mask_sampling, duration,
-            lambda_back_sample_unobs
-        )
+        integral_complete = self.getIntegral(
+            sampled_hidden, mask_sampling, duration)
+        #print(integral_complete)
         # batch_size * num_particles
         # </s> int_{0}^{T} lambda_sum dt for scheduled actions
 
 
         # <s> log likelihood computation
         logP_complete = log_lambda_target_complete.sum(2) - integral_complete
-        logP_obs = log_lambda_target_obs.sum(2) - integral_obs
-        if self.unobs_num > 0:
-            logP_unobs = log_lambda_target_unobs.sum(2) - integral_unobs
-            #intensity_regularization = torch.sum(integral_unobs) * self.strength
-        else:
-            logP_unobs = None
-            #intensity_regularization = 0.0
         # batch_size * num_particles
         # </s> log likelihood computation
 
@@ -448,6 +358,7 @@ class NeuralHawkes(nn.Module):
                     batch_size, num_particles).fill_(1.0) )
             weight = weight / torch.sum(weight, dim=1, keepdim=True)
 
+        # For now we only have one mode
         if mode == 1:
             # complete log likelihood
             objective = -torch.sum( logP_complete * weight )
